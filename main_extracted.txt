@@ -1,0 +1,756 @@
+            Class-Aware Drift Compensation for Non-Uniform Semantic Shift
+                                in Continual Learning
+
+                   Fankang Xu1 , Lu Jin1 , Yanpeng Sun2 , Shiyu Xuan1 , Zechao Li1 *
+     1
+         School of Computer Science and Engineering, Nanjing University of Science and Technology
+                            2
+                              Singapore University of Technology and Design
+                    {frank.xu, lujin, yanpeng sun, shiyu xuan, zechao.li}@njust.edu.cn
+
+
+
+                            Abstract                              Sequence 1: uniform semantic shift
+
+
+Continual learning aims to develop models that can incre-
+mentally acquire new knowledge without sacrificing pre-
+                                                                                   Mild shift               Abrupt shift
+viously acquired information. When the storage of past                Task A                       Task B                  Task C
+data is completely prohibited, catastrophic forgetting is ex-                Mild & Abrupt shift            Abrupt shift
+
+acerbated, stimulating research in exemplar-free contin-
+ual learning, where class prototypes are typically retained
+and periodically updated via drift compensation. How-
+ever, these drift compensation methods generally assume           Sequence 2: non-uniform & uniform semantic shift
+that semantic shift between tasks occurs uniformly (i.e., uni-
+formly mild or uniformly abrupt), whereas in real-world
+data streams, such shift is often unpredictable. To address        Mild semantic shift
+this issue, we propose a Class-Aware Drift Compensation
+(CADC) method to handle feature drift under non-uniform            Abrupt semantic shift
+semantic shift. The method dynamically models the drift de-
+gree of old classes under the challenging exemplar-free sce-                                                    Drift compensation degree
+nario, enabling class-specific adaptive compensation. Fur-
+                                                                       Traditional drift compensation:           Our drift compensation:
+thermore, we demonstrate that the class drift modeled by               class-agnostic                            class-aware
+CADC can effectively guide knowledge distillation by im-
+posing class-specific constraints on logits based on drift in-   Figure 1. A motivational illustration of class-aware drift compen-
+tensity, which motivates the design of drift-guided distilla-    sation. Objects of the same color share semantic similarity, such
+                                                                 as cats and pandas as animals, and trucks and sedans as vehicles.
+tion to better balance model stability and plasticity. Ex-
+                                                                 The top part shows that classes across tasks may be semantically
+tensive experiments on six datasets demonstrate the supe-
+                                                                 related or unrelated, indicating non-uniform semantic shift. The
+riority of the proposed method over existing exemplar-free       bottom part compares the semantic shift degrees across different
+approaches and the advantage of CADC over state-of-the-          classes in Task A during the transition to Task B in Sequence 2.
+art drift compensation techniques. Code is available at
+https://github.com/AldrinLake/CADC.git.
+                                                                 cremental inputs. However, the dynamic and non-i.i.d. na-
+                                                                 ture of such data often leads to suboptimal learning, as gra-
+1. Introduction                                                  dient updates from new data may interfere with previously
+                                                                 learned knowledge [40]. This phenomenon, known as the
+Neural network models have demonstrated outstanding per-
+                                                                 notorious catastrophic forgetting, has attracted significant
+formance in a wide array of real-world applications, includ-
+                                                                 attention in the field of continual learning [2, 16, 36, 48],
+ing computer vision, natural language processing, and mul-
+                                                                 which aims to develop models that strike a balance between
+timodal learning [14, 27, 34]. In practice, as operational
+                                                                 stability and plasticity by acquiring new knowledge without
+data gradually accumulates in evolving systems, models are
+                                                                 sacrificing previously learned information.
+often required to continuously acquire new patterns from in-
+                                                                    As a representative paradigm in continual learning, Class
+  * Corresponding author.                                        Incremental Learning (CIL) [5, 10, 19] defines a unified
+                                        10.0                                            0.10
+    9.03   Nan    Nan
+                         Euclidean             0.089    Nan    Nan
+                                                                       1 - Cosine                                                        Original prototype
+                                        9.5
+                                                                                        0.09
+     Nan   9.92   Nan     Nan    Nan            Nan    0.100   Nan      Nan      Nan
+                                                                                                                                         Oracle prototype
+                                        8.5
+     Nan   Nan    9.05    Nan    Nan            Nan     Nan    0.096     Nan     Nan    0.08    Bias induced by excessive or             Compensated prototype
+                                        7.5                                                     insufficient drift compensation
+     Nan   Nan    Nan     9.27   Nan            Nan     Nan     Nan     0.075    Nan                                                     Traditional drift compensation:
+                                                                                        0.07                                             uniform across classes
+                                        6.5
+     Nan   Nan    Nan     Nan    6.96           Nan     Nan    Nan      Nan     0.075
+                                                                                                                                         Real semantic shifts:
+                                        0                                               0                                                diverse across classes
+
+
+
+
+Figure 2. At the left, heatmaps illustrate the degree of semantic shift. Experiments are conducted with LwF [23] on CIFAR-100 (initial
+0 classes, increments of 5 classes). Oracle prototypes are recalculated using data from the first task upon completion of the second
+task, whereas the original prototypes are computed immediately after the first task is finished. Significant variations in semantic drift
+can be observed among different classes based on both Euclidean and cosine distances. The right illustrates that applying uniform drift
+compensation across classes leads to excessive or insufficient correction.
+
+
+framework in which a model is trained sequentially on a                                        The presence of such non-uniform semantic shifts is veri-
+series of tasks, each comprising mutually exclusive classes,                                   fied by measuring the distance between stored and oracle
+while being expected to perform well across all previously                                     prototypes on CIFAR-100, as shown in Fig. 2. As unified
+encountered classes at inference [20, 21, 39]. A common                                        drift compensation is class-agnostic, it may lead to exces-
+strategy in CIL is to store a limited number of exemplars per                                  sive or insufficient adjustments under non-uniform semantic
+class in a memory buffer for replay during subsequent tasks.                                   shifts, with bias accumulating over tasks.
+Although effective, this approach faces constraints in stor-                                       To address the above challenge, we propose a Class-
+age and data privacy, driving growing interest in exemplar-                                    Aware Drift Compensation (CADC) method tailored to
+free solutions [35, 47]. In this work, we focus on Exemplar-                                   complex non-uniform semantic shifts. It adaptively cor-
+Free Class Incremental Learning (EFCIL) under a cold-start                                     rects the intermediate representations of different classes
+setting, which poses a significant challenge as the model                                      based on semantic shift degrees. Since CADC relies on
+is trained from scratch without access to any prior knowl-                                     estimating class-specific semantic shifts and past data are
+edge. In EFCIL, prototypes or intermediate features are of-                                    unavailable in the exemplar-free scenario, it cannot evalu-
+ten stored to support the model’s ability to learn continu-                                    ate semantic shifts using oracle prototypes in the same way
+ously [15, 22, 29].                                                                            as the heatmaps shown in Fig. 2. We propose dynami-
+    However, a key challenge in EFCIL is that the model’s                                      cally learning drift compensation and treating the compen-
+ongoing evolution causes stored representations to become                                      sated old class representations in each training round as ap-
+outdated, leading to semantic feature drift [7, 37]. Ad-                                       proximations of oracle prototypes, thereby enabling real-
+dressing such drift remains a critical challenge, and recent                                   time evaluation of drift. In this process, the updated proto-
+studies have strived to alleviate forgetting by correcting old                                 types guide the modeling of semantic shift degrees, which
+class representations through drift compensation [9, 13, 31].                                  in turn direct the compensation of prototypes. Although
+Although effective, these methods assume uniform seman-                                        this forms a seemingly suboptimal loop, prototype gradi-
+tic shifts between tasks, meaning the shifts are either uni-                                   ents are detached via the drift compensation network, and
+formly mild or uniformly abrupt [15]. However, semantic                                        the model still shows strong empirical performance. More-
+relationships between classes across tasks are typically ran-                                  over, we show that the class-specific semantic shift can in-
+dom, resulting in largely unpredictable semantic shifts for                                    form knowledge distillation by applying tailored constraints
+past classes during task transitions. The phenomenon can                                       to logits according to the drift degrees, leading to the design
+be illustrated in Fig. 1. In Sequence 1, both Task A and                                       of a drift-guided knowledge distillation. The key contribu-
+Task B involve animal classes, leading to uniformly mild se-                                   tions are summarized as follows:
+mantic shifts in Task A. Similarly, all classes in Task B un-                                  1. We propose CADC, the first drift compensation method
+dergo uniformly abrupt shifts when transitioning to Task C.                                        designed to address non-uniform semantic shifts across
+Such uniform transitions represent the ideal case assumed                                          tasks, enabling precise correction for each class.
+by existing drift compensation approaches. However, these                                      2. A drift-guided knowledge distillation is developed to dy-
+methods are less effective in the more realistic scenario of                                       namically adjust class-wise regularization strength ac-
+Sequence 2, where the transition from Task A to B results                                          cording to different semantic shifts.
+in non-uniform shifts. Since Task B focuses on vehicles,                                       3. Extensive experiments show that CADC outperforms
+the class cat from Task A experiences an abrupt semantic                                           existing EFCIL methods and achieves superior results
+shift, whereas the class truck undergoes only a mild one.                                          compared to existing drift compensation approaches.
+2. Related Work                                                    all classes observed from T1 to Tt , denoted as C1:t . A deep
+                                                                   model of task Tt can be viewed as a composition of a feature
+Class Incremental Learning (CIL). In CIL, a model is               extractor fθt parameterized by θ and a classifier gπt param-
+trained sequentially on a series of tasks with disjoint classes.   eterized by π. fθt learns a d dimension representation zi of
+Existing approaches to CIL can be broadly categorized into         input xi , i.e., zi = fθt (xi ) ∈ Rd . A unified classification
+three types [42, 43]: regularization-based methods, dy-            head gπt maps the representation zi to a probability distri-
+namic network-based methods, and rehearsal-based meth-             bution over all seen classes, indicated as gπt (zi ) ∈ R|C1:t | .
+ods. The method based on regularization aims to preserve           The model for task Tt is initialized from task Tt−1 .
+prior knowledge by explicitly or implicitly constraining
+                                                                   Problem Definition. This work focuses on addressing the
+changes in model parameters [1, 26]. Dynamic network-
+                                                                   feature drift problem [9] in CIL, where continuous model
+based methods adopt the principle of parameter isolation
+                                                                   updates cause semantic shifts in previously learned repre-
+by expanding the architecture for each task [4, 6]. The
+                                                                   sentations. This issue is more severe in exemplar-free set-
+method based on rehearsal alleviates forgetting by introduc-
+                                                                   tings, where no stored samples anchor the old feature space.
+ing buffered samples from previous tasks during new task
+                                                                   Drift compensation [37] mitigates the feature drift issue by
+training [44]. Despite the effectiveness, the rehearsal-based
+                                                                   aligning old class representations with the evolving feature
+method is limited by memory constraint or privacy con-
+                                                                   space, thereby preserving their semantic consistency dur-
+cerns. As a result, exemplar-free class incremental learning
+                                                                   ing continual learning. This work reveals that the seman-
+(EFCIL) has emerged as an increasingly prominent research
+                                                                   tic shifts of old-class representations are non-uniform [15]
+focus [12, 38]. Since past data are strictly prohibited from
+                                                                   across different classes, and drift compensation should be
+being retained, the distributions of previous classes in the
+                                                                   performed in a class-aware manner according to the extent
+new feature space remain unknown, presenting significant
+                                                                   of feature drift. The vanilla drift compensation approach
+challenges related to feature drift. In this work, we adopt a
+                                                                   learns a linear mapping from the old representation space to
+cold-start setting, enabling a more direct evaluation of the
+                                                                   the new one after the new model has been fully adapted to
+drift compensation performance.
+                                                                   the new task. Its objective for adapting to the new task Tt is
+Drift Compensation. As the feature extractor is continu-
+ously updated in CIL, previously stored representations be-
+come invalid in the new feature space, resulting in feature                    \mathcal {O}_{\mathrm {adapt}}=\underset {\theta ,\pi }{\inf }\:\mathbb {E}_{x\sim \mathcal {D}_{t}^{train}}\left [\mathcal {L}_{\mathrm {cls}}+\gamma \cdot \mathcal {L}_{\mathrm {kd}}\right ]    (1)
+drift. Drift compensation [13] provide a practical solution
+to the feature drift issue by estimating the distribution of       where Lcls is the cross-entropy loss for learning new
+previous classes within the new feature space. SDC [37]            classes, and Lkd is the logits-based distillation loss for pre-
+suggests that the drift of old class representations can be es-    serving old knowledge [23]. γ is the balancing parameter.
+timated by analyzing distributional shifts of new task data        In particular, we introduce Ltrsf in Oadapt to dynamically
+across the old and new feature spaces. This finding has            model the degree of semantic shift, which guides both drift
+spurred increasing attention to drift compensation [22, 30].       compensation and knowledge distillation.
+Recently, LDC [7] learns a projector between the outputs
+of the current and previous models, and projects old class
+                                                                   3.2. Motivation
+prototypes into the new representation space after each task.      Existing drift compensation methods typically rely on the
+However, existing methods assume uniform semantic shifts,          assumption of uniform semantic shifts across tasks [15].
+overlooking that different classes may shift differently. Uni-     In practice, semantic shift varies across classes, causing
+form compensation often leads to excessive or insufficient         vanilla methods to excessively or insufficiently compensate,
+correction, with such bias accumulating over time. To our          with bias accumulating over time. This observation mo-
+knowledge, this is the first work to address drift compensa-       tivates the design of our Class-Aware Drift Compensation
+tion under the non-uniform semantic shift.                         (CADC) approach, as illustrated in Fig. 3. Fig. 3 illus-
+                                                                   trates the training process for a new task Tt . A default cross-
+3. Methodology                                                     entropy loss is applied for learning new classes (omitted for
+                                                                   clarity), alongside two key modules: drift-guided knowl-
+3.1. Preliminaries                                                 edge distillation (KD) and the drift estimator. The drift es-
+Notation. In CIL, the model learns a sequence of tasks             timator, implemented as a linear layer, models the transfer
+T = {T1 , T2 , . . . , TN }, where N denotes the number            pattern in the representation space by fitting outputs from
+of tasks. The task Tt ∈ T consists of a training set               the old and new models. This pattern is then used to per-
+Dttrain = {(xi , yi )}ni=1 associated with a set of classes        form drift compensation, continuously updating old proto-
+Ct = {c1 , c2 , . . . , cm }, where yi ∈ Ct corresponds to the     types during training. By computing discrepancies between
+ground-truth class of xi . For ∀Tt , Tk ∈ T , their label spaces   prototypes in the old and new representation spaces, we dy-
+satisfy Ct ∩ Ck = ∅. The test data Dttest for task Tt includes     namically model semantic shifts and obtain the class-wise
+                                                                                                                                                                                                                 Non-uniform semantic shift
+                                                                                                                                                                                                                                                                                                                                                    Data stream
+                                     New model                                                                                                                                                                                                                                                       Current                                                                                                                                        Task Tt-1                                                             Task Tt
+                                                                                                                                                                                                                                                                                                     feature space
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        ...
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              New
+                                      Classifier                                                                                                                                                                                                                                                                                                       Drift compensation                                                                                                                                                                                     data
+
+                                              ...                                                                                                                                                                                                                                                                                                                                                          Ψ(                              )
+                                                                                                                                                                                                        Past                                                                                                                                                                                                                                                                                       New data
+                                           CEL                                                                                                                                                          feature space
+                                                                                                                                                                                                                                                                                                                                                                                                           Ψ(                              )
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         New model
+                                              ...
+                                                                                                                                                                                                                                                                                                                                                                                                           Ψ(                              )
+            Guide
+
+
+
+
+                                      Classifier                                                                                                                                                                        Modeling semantic shift
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            MSE
+                                                                                                                                                                                                                                                                                                                                                                       Drift estimator
+                                     Old model
+
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            Drift estimator
+                                                   ...                                                                                                                                                                                                                                                                                                                             ...
+                          Class-wise drift degree                                                                                                                                                                                                                                                                                                               Class-wise drift degree
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        Old model
+
+     Drift-Guided KD                                                                                                                                                                           Class-Aware Drift Compensation                                                                                                                                                                                                                                                                      New data
+
+
+                                                                           Prototypes of diverse classes                                                                                                                                                                             Drifted prototypes                                                   Embeddings of samples                                                                                                                                       Logits
+
+
+Figure 3. Overview of the proposed method. Class-aware drift compensation is achieved by modeling non-uniform semantic shifts via
+prototype differences between old and new feature spaces, yielding class-wise drift degrees. These degrees facilitate prototype alignment to
+the new feature space through drift compensation. Additionally, class-wise drift degrees guide knowledge distillation by assigning stronger
+regularization to classes with higher transfer difficulty.
+
+drift degree, which guides both CADC and KD. As gradi-                                                                                                                                                                                                                                                                                           avoid this issue, it limits the model’s plasticity for learn-
+ents to old prototypes are detached when passing through                                                                                                                                                                                                                                                                                         ing new classes. Therefore, permitting a controlled degree
+the drift estimator, this design avoids a non-convergent loop                                                                                                                                                                                                                                                                                    of drift while implementing precise compensation for each
+and achieves empirically strong performance.                                                                                                                                                                                                                                                                                                     class is a viable strategy. However, in EFCIL, the use of
+                                                                                                                                                                                                                                                                                                                                                 past data is prohibited, making it infeasible to directly com-
+3.3. Class-Aware Drift Compensation                                                                                                                                                                                                                                                                                                              pute the true semantic shift degree S t (ci ) for ci ∈ C1:t−1 .
+As previously mentioned, semantic shifts between tasks                                                                                                                                                                                                                                                                                           An alternative is to estimate it by measuring the distance
+vary across classes, so an ideal drift compensation method                                                                                                                                                                                                                                                                                       between class prototypes in the old and new feature spaces.
+should tailor the correction according to the class-specific                                                                                                                                                                                                                                                                                     However, the oracle prototypes in the new space are still in-
+semantic shifts. Thus, modeling semantic shift is essential                                                                                                                                                                                                                                                                                      accessible without old data. To address this, we propose ap-
+for the success of class-aware drift compensation.                                                                                                                                                                                                                                                                                               proximating the position of old class prototypes in the new
+Modeling Semantic Shift. Let Pi denote the original prob-                                                                                                                                                                                                                                                                                        representation space gradually using a drift estimator Ψ. Let
+ability distribution of old class ci ∈ C1:t−1 , and Qi its dis-                                                                                                                                                                                                                                                                                                          |C1:t−1 |
+                                                                                                                                                                                                                                                                                                                                                 p∗ i ∈ P∗1:t−1 = {p∗ i }i=1       denote the oracle prototype of
+tribution in the feature space of the current task Tt . The se-                                                                                                                                                                                                                                                                                  class ci ∈ C1:t−1 in task Tt , and pi ∈ P1:t−1 = {pi }i=1
+                                                                                                                                                                                                                                                                                                                                                                                                          |C1:t−1 |
+mantic shift of an arbitrary class ci ∈ C1:t−1 can be reflected                                                                                                                                                                                                                                                                                  its original prototype. Thus, the semantic shift for class ci
+by modeling the optimization objective that preserves its                                                                                                                                                                                                                                                                                        can be computed as
+knowledge, expressed as
+
+                                                                                                                                                                                                                                                                                                                                                            \mathcal {S}^{t}\left (c_{i}\right )=\parallel \mathrm {p}_{i}-\mathrm {p^{*}}_{i}\parallel _{2}=\parallel \mathrm {p}_{i}-\Psi \left (\mathrm {p}_{i}\right )\parallel _{2},\label {eq:shift}       (3)
+    \mathcal {O}_{\mathrm {shift}}^{c_{i}}=\underset {\theta }{\inf }\int _{\mathcal {X}^{c_{i}}}\mathbb {P}^{i}\left (f_{\theta }^{(c_{i})}\left (x\right )\right )\log \frac {\mathbb {P}^{i}\left (f_{\theta }^{(c_{i})}\left (x\right )\right )}{\mathbb {Q}^{i}\left (f_{\theta }^{t}\left (x\right )\right )},\label {eq:shift-obj}  (2)
+                                                                                                                                                                                                                                                                                                                                                 where ∥ · ∥2 denotes the l2 norm, i.e., the Euclidean dis-
+where (ci ) denote the task index to which class ci belongs,                                                                                                                                                                                                                                                                                     tance. Other metrics such as cosine distance can also be
+and X ci represent the input space of ci . Ideally, minimiz-                                                                                                                                                                                                                                                                                     considered, which will be discussed in the experimental
+ing the semantic shift of class ci in Eq. (2) maximizes the                                                                                                                                                                                                                                                                                      section. The drift estimator Ψ, realized as a linear layer
+preservation of knowledge for ci . The feature drift caused                                                                                                                                                                                                                                                                                      W ∈ Rd×d with bias b ∈ Rd , is endowed with the ability
+by semantic shift is a major challenge in CIL. Although                                                                                                                                                                                                                                                                                          to capture the transformation pattern between old and new
+                                                     (c )
+freezing the feature extractor, i.e., setting fθt = fθ i , can                                                                                                                                                                                                                                                                                   feature spaces through the following optimization objective
+                                                                                                                                                                                                                                                                                                                                vanilla knowledge distillation (KD) in CIL. In vanilla KD,
+                                                                                                                                                                                                                                                                                                                                a uniform constraint is applied to the logits of all classes
+                  \begin {array}{c} \mathcal {O}_{\mathrm {trsf}}=\underset {\mathbf {W},\mathbf {b}}{\inf }\mathbb {E}_{x\sim \mathcal {D}_{t}^{train}}[\mathcal {L}_{\mathrm {trsf}}(x;f_{\theta }^{t},f_{\theta }^{t-1},\mathbf {W},\mathbf {b})],\end {array}\label {eq:O_trsf}                        (4)                  across all training phases, without accounting for the vary-
+                                                                                                                                                                                                                                                                                                                                ing difficulty involved in transferring knowledge of differ-
+                                                                                                                                                                                                                                                                                                                                ent classes. We argue that knowledge that is more difficult
+                                                                                                                                                                                                                                                                                                                                to transfer should be assigned stronger regularization in or-
+                 \mathcal {L}_{\mathrm {trsf}}=\frac {1}{B}\underset {i=1}{\overset {B}{\sum }}\left (\left (f_{\theta }^{t-1}(x_{i})\cdot \mathbf {W}+\mathbf {b}\right )-f_{\theta }^{t}\left (x_{i}\right )\right )^{2},                                                                                (5)                  der to maximize its retention. Conversely, knowledge that
+                                                                                                                                                                                                                                                                                                                                is easier to transfer requires only a weaker degree of regu-
+where B denotes the batch size, and the loss is computed                                                                                                                                                                                                                                                                        larization. Inspired by this, we utilize the class-wise drift
+as the mean squared error (MSE). The loss Ltrsf in the op-                                                                                                                                                                                                                                                                      degree τi modeled by Eq. (7) to quantify the difficulty of
+timization objective depends only on the current task data                                                                                                                                                                                                                                                                      knowledge transfer and accordingly design a Drift-Guided
+Dttrain , and the resulting gradients affect only the param-                                                                                                                                                                                                                                                                    KD (DGKD), the optimization objective of which is defined
+eters {W, b} of the drift estimator Ψ. By learning the                                                                                                                                                                                                                                                                          with a cross-entropy loss (CEL), expressed as
+transfer pattern from the old to the new feature space via
+                                                                                                                                                                                                                                                                                                                                          \begin {array}{c} \mathcal {O}_{\mathrm {dgkd}}=\underset {\mathbf {\theta },\mathbf {\pi }}{\inf }\;\mathbb {E}_{x\sim \mathcal {D}_{t}^{train}}[\mathcal {L}_{\mathrm {dgkd}}\left (x;f_{\theta }^{t},g_{\pi }^{t}\right )]\end {array},\label {eq:obj_dgkd}     (8)
+Eq. (4), the drift estimator is expected to align the old class
+prototypes with the new space, meaning Ψ (pi ) ≃ p∗ i for
+∀pi ∈ P1:t−1 . The optimization objective in Eq. (4) is
+performed concurrently during the learning of new task Tt ,                                                                                                                                                                                                                                                                                       \mathcal {L}_{\mathrm {dgkd}}=-\frac {1}{B}\underset {i=1}{\overset {B}{\sum }}\underset {j=1}{\overset {\mid \mathcal {C}_{1:t-1}\mid }{\sum }}\tau _{j}\cdot \left (l_{i}^{j}\log \bar {l}_{i}^{j}\right ),                                              (9)
+allowing the semantic shift degree in Eq. (3) to be dynami-
+cally modeled at each epoch.
+Drift Compensation. Before applying class-aware drift                                                                                                                                                                                                                                                                           where lij and ¯lij denote the j-th logits of gπt (fθt (xi )) and
+compensation to update prototypes, compensation weights                                                                                                                                                                                                                                                                         gπt−1 fθt−1 (xi ) , respectively. The drift degree τj evolves
+     |C1:t−1 |
+{τi }i=1       should be assigned to classes based on Eq. (4).                                                                                                                                                                                                                                                                  dynamically during training, allowing the distillation to
+In particular, the weight τi is adaptively computed based                                                                                                                                                                                                                                                                       adapt to individual classes. This adaptive mechanism pro-
+on the dynamically modeled semantic shift degree S t (ci ).                                                                                                                                                                                                                                                                     motes class-specific knowledge retention, thereby mitigat-
+                              |C1:t−1 |                                                                                                                                                                                                                                                                                         ing forgetting in a more precise manner.
+Specifically, for ∀τi ∈ {τi }i=1        , it is defined as
+                                                                                                                                                                                                                                                                                                                                3.5. Overall Optimization
+  \tau _{i}=\frac {\epsilon }{1+\exp \left (-\bar {\mathcal {S}}^{t}\left (c_{i}\right )\right )},\,\bar {\mathcal {S}}^{t}\left (c_{i}\right )=\frac {\mathcal {S}^{t}\left (c_{i}\right )}{\max \left \{ \mathcal {S}^{t}\left (c_{i}\right )\right \} _{i=1}^{\mid \mathcal {C}_{1:t-1}\mid }}.\label {eq:fuzzy_decision}    The overall loss for the optimization of our proposed
+                                                           (6)                                                                                                                                                                                                                                                                  method can be summarized as follows:
+Here ϵ denotes a scaling factor, which will be discussed in                                                                                                                                                                                                                                                                                                           \mathcal {L}=\mathcal {L}_{\mathrm {cls}}+\gamma \cdot \mathcal {L}_{\mathrm {dgkd}}+\delta \cdot \mathcal {L}_{\mathrm {trsf}},\label {eq:final_loss}                                                                                (10)
+the experimental section. S̄ t (ci ) can be interpreted as the
+relative strength of semantic shift. Then, after each train-                                                                                                                                                                                                                                                                    where γ and δ are hyperparameters used to balance the
+ing epoch, the old class prototypes can be corrected through                                                                                                                                                                                                                                                                    importance of different modules. Lcls serves as the base
+class-aware drift compensation, computed as                                                                                                                                                                                                                                                                                     module, employing a cross-entropy loss to learn new class
+                                                                                                                                                                                                                                                                                                                                knowledge. During inference, we use the prototypes up-
+         \Psi \left (\mathrm {p}_{i}\right )=\mathrm {p}_{i}+\tau _{i}\cdot \left (\mathrm {p}_{i}\cdot \mathbf {W}+\mathbf {b}-\mathrm {p}_{i}\right ),\tau _{i}\leftarrow \frac {\tau _{i}+\tau _{i}^{\prime }}{2},\label {eq:drift_compensation}  (7)                                                                        dated by Eq. (7) and adopt the nearest class mean (NCM)
+                                                                                                                                                                                                                                                                                                                                classifier, as commonly done in prior work [7]. Its sensi-
+where τi can be interpreted as the class-wise drift degree,                                                                                                                                                                                                                                                                     tivity to prototype quality makes it particularly suitable for
+and τi′ corresponds to its value computed in the last epoch.                                                                                                                                                                                                                                                                    reliably evaluating the effectiveness of drift compensation.
+A momentum update strategy is adopted to refine τi , aim-
+ing to mitigate the impact of gradient instability on model-                                                                                                                                                                                                                                                                    4. Experiments
+ing semantic shifts during training. It is worth noting that
+during training, the gradients from Eq. (7) are detached.                                                                                                                                                                                                                                                                       4.1. Experiment Settings
+Consequently, as training proceeds, the new representation                                                                                                                                                                                                                                                                      Datasets. We conduct experiments on standard CIL bench-
+space becomes stable, the semantic shift estimated by Eq.                                                                                                                                                                                                                                                                       marks, including CIFAR-100 [18], TinyImageNet [33], and
+(3) converges, and the class-aware drift compensation con-                                                                                                                                                                                                                                                                      ImageNet-Subset [3], as well as two fine-grained datasets,
+ducted by Eq. (7) reaches its optimal performance.                                                                                                                                                                                                                                                                              CUB-200 [32] and Stanford Cars [17], and a large-scale
+                                                                                                                                                                                                                                                                                                                                dataset, ImageNet-1K [3]. Following existing EFCIL stud-
+3.4. Drift-Guided Knowledge Distillation                                                                                                                                                                                                                                                                                        ies [7, 9], we adopt the cold start setting, where each dataset
+In the last section, the semantic shifts of old classes are dy-                                                                                                                                                                                                                                                                 is evenly split into several tasks. Specifically, under the
+namically modeled during training. Building on this foun-                                                                                                                                                                                                                                                                       5/10/20 task splits, CIFAR-100 and ImageNet-Subset con-
+dation, it is valuable to further examine the rationale behind                                                                                                                                                                                                                                                                  tain 20/10/5 classes per task, while TinyImageNet contains
+          Table 1. Comparison of EFCIL methods on three datasets under 5-task and 10-task splits. Results marked with † are reported from [9].
+
+                                                                                  CIFAR-100                                                                                                          TinyImageNet                                                                                     ImageNet-Subset
+                                       Methods
+                                                                         5 stages                                          10 stages                                         5 stages                                            10 stages                                5 stages                                               10 stages
+                                                  †
+                                        LwF                        45.35                                                 26.14                                          38.81                                                      27.42                            50.88                                                       37.90
+                                        PASS                    48.15 ± 0.88                                          25.33 ± 4.51                                   34.78 ± 0.39                                               25.07 ± 0.28                     39.27 ± 0.05                                                26.70 ± 0.22
+          Last Task Accuracy
+
+
+
+
+                                        SSRE                    37.30 ± 1.31                                          18.64 ± 1.43                                   28.75 ± 0.10                                               20.78 ± 1.01                     35.16 ± 0.38                                                23.60 ± 0.28
+                                        FeTrIL                  41.96 ± 0.34                                          32.38 ± 0.70                                   21.50 ± 0.77                                               15.42 ± 0.64                     41.86 ± 1.27                                                30.45 ± 1.14
+                                       FeCAM†                      47.28                                                 33.82                                          25.62                                                      23.21                            54.18                                                       42.68
+                                       NAPA-VQ                  46.68 ± 0.34                                          37.07 ± 012                                    26.67 ± 0.15                                               20.37 ± 0.06                     38.93 ± 0.67                                                26.15 ± 0.75
+                                        FKSR                    44.50 ± 0.69                                          31.25 ± 2.01                                   32.29 ± 3.98                                               19.03 ± 0.24                     47.73 ± 0.87                                                35.65 ± 0.38
+                                         FCS                    45.47 ± 3.00                                          32.95 ± 5.08                                   40.85 ± 0.40                                               30.71 ± 2.85                     58.69 ± 0.39                                                40.39 ± 1.70
+                                         EFC                    53.13 ± 0.59                                          44.65 ± 0.46                                   45.43 ± 0.34                                               34.10 ± 0.77                     58.89 ± 1.17                                                47.38 ± 1.43
+                                         Ours                   59.41 ± 0.35                                          47.32 ± 0.56                                   47.19 ± 0.42                                               38.88 ± 0.55                     68.30 ± 0.90                                                57.07 ± 0.70
+                                        LwF†                       61.94                                                 46.14                                          49.70                                                      38.77                            69.11                                                       61.60
+          Average Incr. Accuracy
+
+
+
+
+                                        PASS                    63.32 ± 0.72                                          43.14 ± 4.68                                   45.55 ± 0.56                                               36.01 ± 0.16                     59.87 ± 0.26                                                49.03 ± 0.34
+                                        SSRE                    51.86 ± 0.31                                          33.15 ± 1.46                                   40.76 ± 1.34                                               33.73 ± 2.08                     50.24 ± 0.74                                                39.30 ± 0.79
+                                        FeTrIL                  59.21 ± 0.51                                          50.26 ± 0.15                                   35.25 ± 1.79                                               27.91 ± 2.30                     57.93 ± 1.42                                                48.06 ± 1.18
+                                       FeCAM†                      61.37                                                 48.58                                          39.85                                                      35.32                            67.21                                                       57.45
+                                       NAPA-VQ                  61.50 ± 0.07                                          51.94 ± 0.31                                   40.50 ± 0.53                                               31.72 ± 0.04                     55.22 ± 0.67                                                42.35 ± 0.84
+                                        FKSR                    60.96 ± 0.10                                          48.43 ± 2.08                                   44.50 ± 3.64                                               32.99 ± 2.67                     62.61 ± 0.38                                                52.47 ± 0.06
+                                         FCS                    61.93 ± 1.83                                          47.60 ± 6.23                                   54.07 ± 0.80                                               45.19 ± 2.67                     66.94 ± 1.52                                                56.12 ± 1.67
+                                         EFC                    66.79 ± 1.31                                          59.31 ± 1.96                                   57.06 ± 0.67                                               47.95 ± 0.61                     71.63 ± 1.39                                                59.94 ± 1.38
+                                         Ours                   71.56 ± 0.72                                          63.18 ± 0.96                                   59.03 ± 1.63                                               52.54 ± 1.82                     77.43 ± 0.46                                                70.35 ± 0.84
+
+                                                           PASS    FKSR
+                                             T in y Im a g e N e t                                                           T in y Im a g e N e t                                                                                                                                                                 Im a g e N e t-S u b s e t
+                                                                                                                                                                                                                                             PSASSRSE FFKCSSR
+                                                                                                                                                                                                                            Im a g e N e t-S u b s e t
+                                                           SSRE    FCS
+                      8 0                                                                               9 0                                                                                                                                                                                     9 5
+
+                                                           FeTrIL  EFC
+                                                                                                                                                                                                             1 0 0
+
+
+                                                           NAPA-VQ Ours                                                                                                                                                                       FNeATPrAI-LVQ EOFuCrs
+                                                                                                                                               P A S S               F K S R                                                                                                                                                           P A S S               F K S R
+                                                                                                                                                S S R E               F C S                                    9 0                                                                                                                      S S R E               F C S
+                                                                                                                                                                                                                                                                                                8 0
+A c c u ra c y (% )
+
+
+
+
+                      6 5
+                                                                                  A c c u ra c y (% )
+
+
+
+
+                                                                                                                                                                                                                                                                          A c c u ra c y (% )
+                                                                                                        7 0                                      F e T rIL             E F C                                                                                                                                                             F e T rIL             E F C
+                                                                                                                                                                                       A c c u ra c y (% )
+
+
+
+
+                                                                                                                                                  N A P A -V Q          O u rs                                 8 0                                                                                                                        N A P A -V Q          O u rs
+
+                                                                                                                                                                                                               7 0                                                                              6 5
+                      5 0                                                                               5 0
+                                                                                                                                                                                                               6 0                                                                              5 0
+                      3 5                                                                               3 0                                                                                                    5 0
+                                                                                                                                                                                                                                                                                                3 5
+                                                                                                                                                                                                               4 0
+                      2 0                                                                               1 0                                                                                                    3 0                                                                              2 0
+                                   1     2             3             4        5                               1   2    3       4     5     6           7         8     9         1 0                                 1      2            3            4               5                               1   2    3       4     5     6           7         8     9         1 0
+                                        In c re m e n ta l T a s k                                                         In c re m e n ta l T a s k                                                                       In c re m e n ta l T a s k                                                             In c re m e n ta l T a s k
+
+                  Figure 4. Test accuracy after each task for different methods on TinyImageNet, and ImageNet-Subset under 5-task and 10-task splits.
+                      Table 2. Performance on long sequence tasks (50-task split).                                                                                                                           Table 3. Last task accuracy comparison on fine-grained datasets.
+                                                      TinyImageNet                                                    ImageNet-Full                                                                                                        CUB-200                                                               Stanford Cars
+          Methods                                                                                                                                                                                               Methods
+                                                      Alast                Ainc                                       Alast                      Ainc                                                                                 5 stages 10 stages                                                      7 stages 14 stages
+                           SDC                        11.43                23.04                                      12.43                      31.61                                                                   SDC            44.97                    29.67                                         38.54                               28.89
+                           LDC                        16.86                29.70                                      16.69                      36.98                                                                   LDC            49.49                    33.50                                         39.56                               28.95
+                           ADC                        17.57                28.17                                      13.63                      35.27                                                                   ADC            51.01                    31.28                                         40.62                               32.90
+                           CADC                       19.46                30.79                                      19.09                      39.68                                                                   CADC           51.27                    35.36                                         41.19                               33.51
+
+40/50/10 classes per task, respectively. Results for 20 tasks
+are reported in the Appendix.                                                                                                                                                                                ods, including SDC [37], LDC [7], and ADC [9]. Two eval-
+Comparison Methods. The proposed method is compared                                                                                                                                                          uation metrics are used to assess performance, including the
+with several existing EFCIL approaches, including LwF                                                                                                                                                        Last Task Accuracy Alast and Average Incremental Accu-
+[23], PASS [45], SSRE [46], FeTrIL [28], FeCAM [8],                                                                                                                                                          racy Ainc . Details of compared methods and evaluation
+NAPA-VQ [25], FKSR [38], FCS [22] and EFC [24]. Fur-                                                                                                                                                         metrics are provided in the Appendix.
+thermore, to verify the effectiveness of the proposed drift                                                                                                                                                  Implementation Details. The widely used ResNet-18 [11]
+compensation module CADC, we conduct ablation studies                                                                                                                                                        is adopted as the backbone and trained from scratch under
+comparing it with state-of-the-art drift compensation meth-                                                                                                                                                  the CIL setting. For all datasets, the initial task is trained
+Table 4. Comparison of CADC and three state-of-the-art drift compensation methods on CIFAR-100 (10-task split) in terms of last task
+accuracy. Results over multiple random seeds demonstrate its strong compatibility with non-uniform semantic shifts.
+                                                                                                                                                                        Seeds
+             Methods                                                                                                                                                                                                                                                                                                                      Average
+                                                 0                      1                                          2                   3                 4                5                                                6                   7                 8                9                              1993
+                      SDC                   42.47                 42.51                      41.20                                42.58              41.97              40.93                                        40.21                41.71             42.33      39.69                                     33.85                 40.86
+                      LDC                   46.62                 46.57                      46.80                                47.04              47.18              45.45                                        45.81                45.43             47.10      47.00                                     45.43                 46.40
+                      ADC                   47.89                 46.17                      45.68                                47.28              46.94              45.71                                        45.16                46.11             46.90      46.74                                     44.32                 46.26
+                      CADC                  48.44                 47.89                      47.88                                48.04              48.38              47.34                                        46.93                47.08             48.51      48.06                                     46.44             47.73 (+1.33)
+
+                                  C IF A R -1 0 0 (2 0 s ta g e s )                                                             T in y Im a g e N e t ( 2 0 s ta g e s )                                                        C U B -2 0 0 (2 0 s ta g e s )                                                 Im a g e N e t-S u b s e t (2 0 s ta g e s )
+                      4 3                                                                                          3 5                                                                                         3 0                                  2 1
+                                                                                                                                                                                                                                                                                                   5 0
+                                                         S D C              A D C                                                                        S D C          A D C                                                                                                                                                              S D C          A D C
+                                                                                                                                                          L D C          C A D C                                                                    2 0
+                                                          L D C              C A D C                                                                                                                                                                                                                                                        L D C          C A D C
+                                                                                                                   3 2                                                                                         2 7                                  1 9
+                      4 0
+A c c u ra c y (% )
+
+
+
+
+                                                                                             A c c u ra c y (% )
+
+
+
+
+                                                                                                                                                                                         A c c u ra c y (% )
+
+
+
+
+                                                                                                                                                                                                                                                                             A c c u ra c y (% )
+                                                                                                                                                                                                                                                    1 8                                            4 5
+                                                                                                                   2 9                                                                                         2 4
+                      3 7
+                                                                                                                   2 6                                                                                         2 1                                                                                 4 0
+                                                                                                                                                                                                                                                                                                   2 5
+                      3 4
+                                                                                                                   2 3                                                                                         1 8
+                                                                                                                                                                                                                               S D C            A D C
+                                                                                                                                                                                                                                L D C            C A D C
+                      3 1                                                                                          2 0                                                                                         1 5                                                                                 2 0
+                            1 6      1 7          1 8             1 9                  2 0                               1 6         1 7           1 8            1 9              2 0                               1 6           1 7              1 8          1 9   2 0                               1 6           1 7          1 8             1 9              2 0
+                                       In c re m e n ta l T a s k                                                                      In c re m e n ta l T a s k                                                                       In c re m e n ta l T a s k                                                       In c re m e n ta l T a s k
+
+
+Figure 5. The drift compensation methods are evaluated across four benchmark datasets (CIFAR-100, TinyImageNet, CUB-200, and
+ImageNet-Subset), with performance comparisons conducted under incremental learning scenarios divided into 20 stages. The line charts
+specifically illustrate the performance during the last five phases. CADC is our proposed method.
+
+Table 5. Comparison of four drift compensation methods by Ainc .                                                                                                                                               flects a cumulative gain exceeding 38% across all preced-
+† indicates results from [9].                                                                                                                                                                                  ing tasks. The improvements are also observed on other
+                                                CIFAR-100                                                                         TinyImageNet                                                                 datasets. Fig. 4 visualizes the performance trends of vari-
+             Methods                                                                                                                                                                                           ous methods across different incremental tasks, demonstrat-
+                                            5 stages 10 stages                                                                 5 stages 10 stages
+                                                                                                                                                                                                               ing consistent superiority over the baselines at each stage.
+                      SDC†                     64.82                         58.02                                              50.82                    40.46                                                 Long Sequence Results on ImageNet-Full. We conduct
+                      LDC                      70.09                         59.50                                              51.34                    46.80                                                 experiments on the 50-task split of ImageNet-Full, where
+                      ADC†                     69.62                         61.35                                              50.94                    43.04                                                 1000 classes are evenly divided into 50 tasks. Addition-
+                      CADC                     71.16                         62.43                                              58.23                    51.70                                                 ally, we perform the same experiment on TinyImageNet,
+                                                                                                                                                                                                               which contains 200 classes split into 50 tasks. According to
+for 200 epochs with a learning rate of 0.1. For subsequent                                                                                                                                                     the results in Table 2, CADC significantly outperforms the
+tasks, which are trained for 100 epochs, the learning rates                                                                                                                                                    advanced LDC method on both datasets for long sequence
+are set to 0.05, 0.005, and 0.01 for CIFAR-100, TinyIma-                                                                                                                                                       tasks. This advantage arises because, as tasks progress, the
+geNet, and ImageNet-Subset, respectively. The batch size                                                                                                                                                       gap between methods in prototype correction widens. Ac-
+is set to 128 for CIFAR-100, and 64 for both TinyImageNet                                                                                                                                                      counting for varying drift compensation degrees for classes
+and ImageNet-Subset. For all datasets, the hyperparameters                                                                                                                                                     can yield substantial improvements in long sequence tasks.
+in Eq. (10) are fixed as γ = 10 and δ = 0.01. The method is                                                                                                                                                    Results on Fine-Grained Datasets. To assess the effective-
+implemented with the PyCIL [41] framework and trained on                                                                                                                                                       ness of CADC in fine-grained datasets, we compare CADC
+a single NVIDIA GTX 4090 GPU. Further implementation                                                                                                                                                           with popular approaches including SDC, LDC, and ADC.
+details can be found in the Appendix.                                                                                                                                                                          All methods are built on a model warmed up on ImageNet to
+                                                                                                                                                                                                               ensure reasonable feature extraction capability. As shown in
+4.2. Comparison with State-of-the-Art                                                                                                                                                                          Table 3, CADC consistently outperforms existing methods
+Main Results. Table 1 presents a comparative analysis                                                                                                                                                          on both fine-grained datasets, indicating that its emphasis
+demonstrating the superiority of the proposed method over                                                                                                                                                      on class-aware modeling continues to benefit drift compen-
+nine representative EFCIL approaches. Using the 10-task                                                                                                                                                        sation even for subtle inter-class differences.
+split of CIFAR-100 as a case study, our method achieves
+                                                                                                                                                                                                               4.3. Ablation Study
+improvements of 1.76% in Alast and 3.87% in Ainc com-
+pared to the second-best baseline, EFC. The improvement                                                                                                                                                        Module Ablation. We conduct a module ablation to eval-
+is considerable, particularly in terms of Ainc , which re-                                                                                                                                                     uate the components in Eq. (10), using the cross-entropy
+                                                                Table 6. Module ablation study under 10-task split.
+                                                                                                                                            CIFAR-100                                                                                                 TinyImageNet
+                                Methods
+                                                                                                                                           Alast Ainc                                                                                                 Alast  Ainc
+                                Base                                                                                                       14.43 33.81                                                                                                11.02 28.36
+                                Base+VKD                                                                                                   41.80 58.62                                                                                                30.73 46.25
+                                Base+DGKD                                                                                                  41.34 59.10                                                                                                32.88 48.09
+                                Base+DGKD+TRSF                                                                                             47.32 63.18                                                                                                38.88 52.54                                                         Figure 8. Analysis of scaling factor ϵ and distance metric on
+                                                                                                                                                                                                                                                                                                                          CIFAR-10 (5-task split).
+                                                                                        C IF A R -1 0 0                                                                                                                                              T in y Im a g e N e t
+                                             1 .8                                                                                                                                                        2 .1
+                                                         + 0 .8 7             + 1 .3                                                                                                                                                                            + 1 .2
+                                                                                                                                                                          Im p ro v e d A c c u ra c y
+              Im p ro v e d A c c u ra c y
+
+
+
+
+                                                                    + 1                           + 0 .9 5                                                                                                                                                                                                + 0 .9 6
+                                                                                                                                                                                                                                                     + 0 .9 7                + 1 .3
+                                             1 .2                                      + 0 .6 3                                                                                                          1 .4
+                                                                                                             + 0 .1 7              + 0 .4 3                                                                         + 0 .8 7                                                          + 0 .9 1 + 0 .7 9
+                                                                                                                                                                                                                                         + 0 .8 1
+                                                                                                                                                                                                                               + 0 .7
+                                             0 .6                                                                       + 0 .3 6                                                                         0 .7
+                                                                                                                                              + 0 .0 1 7
+
+                                                 0                                                                                                                                                          0
+                                                            2       3          4          5          6          7           8          9          1 0                                                                  2         3          4           5         6            7          8        9          1 0
+                                                                                   In c re m e n ta l T a s k                                                                                                                                   In c re m e n ta l T a s k
+
+
+Figure 6. Accuracy improvements of DGKD over vanilla KD on
+incremental tasks under the 10-task split.
+                                       0.09
+                                                                                       CIFAR-100                                                                                                    0.15
+                                                                                                                                                                                                                                                 TinyImageNet
+Mean Distance to Oracle Prototype
+
+
+
+
+                                                                                                                                                             Mean Distance to Oracle Prototype
+
+
+
+
+                                                                        LDC                                                                                                                                                          LDC
+                                                                        CADC                                                                                                                                                         CADC                                                                                    Figure 9. Analysis of γ and δ on CIFAR-10 (5-task split).
+                                       0.06                                                                                                                                                         0.10                                                                                                                  Effect of the Scaling Factor and Distance Metric. In Eq.
+                                                                                                                                                                                                                                                                                                                          (6), we introduce a scaling factor ϵ to control the range of
+                                       0.03                                                                                                                                                         0.05
+                                                                                                                                                                                                                                                                                                                          compensation weights. Additionally, Eq. (3) employs Eu-
+                                                                                                                                                                                                                                                                                                                          clidean distance to model semantic shifts, although other
+                                                                                                                                                                                                                                                                                                                          distance metrics can also be considered. Here, we ana-
+                                       0.00                                                                                                                                                         0.00
+                                                     1          2         3        4          5
+                                                                                   Incremental Task
+                                                                                                         6              7          8          9         10                                                      1          2         3           4          5
+                                                                                                                                                                                                                                                Incremental Task
+                                                                                                                                                                                                                                                                         6            7        8          9          10
+                                                                                                                                                                                                                                                                                                                          lyze the effects of these two factors on experimental out-
+                                                                                                                                                                                                                                                                                                                          comes. Experiments are conducted on CIFAR-10 with a
+Figure 7. Trend of the average distance between corrected proto-                                                                                                                                                                                                                                                          5-task split, and results are visualized in Fig. 8. The ob-
+types and oracle prototypes for tasks 1, 3, and 5.                                                                                                                                                                                                                                                                        servations are as follows: (1) ϵ significantly affects both
+                                                                                                                                                                                                                                                                                                                          evaluation metrics Alast and Ainc . As it increases from
+loss Lce for new class learning as the baseline (Base). Table
+                                                                                                                                                                                                                                                                                                                          0.2 to 2, performance rises, peaks within 1.0–1.4, and then
+6 compares vanilla KD (VKD) with our Drift-Guided KD
+                                                                                                                                                                                                                                                                                                                          declines. (2) Using different distance metrics to model se-
+(DGKD). DGKD outperforms VKD, with a 1.84% gain in
+                                                                                                                                                                                                                                                                                                                          mantic shifts yields similar trends in Fig. 8, suggesting that
+metric Ainc on TinyImageNet. The improvement is more
+                                                                                                                                                                                                                                                                                                                          both Euclidean and cosine distances are effective. On this
+evident with TRSF, as drift compensation enables more ac-
+                                                                                                                                                                                                                                                                                                                          basis, we adopt Euclidean distance and set ϵ = 1 for sim-
+curate modeling of semantic shifts. Fig. 6 shows DGKD’s
+                                                                                                                                                                                                                                                                                                                          plicity and effectiveness.
+improvements over VKD (with τ = 1 in Eq. (6)) after each
+                                                                                                                                                                                                                                                                                                                          Effect of Balance Parameters. We further investigate the
+task, confirming its consistent effectiveness in CIL.
+                                                                                                                                                                                                                                                                                                                          impact of the parameters γ and δ in Eq. (10). As shown in
+Effect of CADC. To validate the proposed CADC method,
+                                                                                                                                                                                                                                                                                                                          Fig. 9 on CIFAR-10, both parameters affect performance.
+we follow [7] and use LwF [23] as the baseline to evalu-
+                                                                                                                                                                                                                                                                                                                          Th weight γ for Ldgkd yields the best results around 10,
+ate the impact of the CADC module. As shown in Table
+                                                                                                                                                                                                                                                                                                                          while the weight δ for Ltrsf should not exceed 0.1. For
+5, CADC outperforms existing drift compensation meth-
+                                                                                                                                                                                                                                                                                                                          simplicity we set γ = 10 and δ = 0.01 in all experiments.
+ods, confirming the effectiveness of class-specific prototype
+adjustment. To simulate non-uniform semantic shifts, we
+                                                                                                                                                                                                                                                                                                                          5. Conclusions
+conduct experiments under multiple random seeds (includ-
+ing the commonly used seed 1993), ensuring varied class                                                                                                                                                                                                                                                                   This paper presents a class-aware drift compensation
+orderings. As shown in Table 4, CADC consistently out-                                                                                                                                                                                                                                                                    (CADC) method designed to accommodate non-uniform se-
+performs existing drift compensation methods, achieving a                                                                                                                                                                                                                                                                 mantic shifts. It dynamically models class-specific seman-
+1.33% improvement over the second-best method. Fig. 7                                                                                                                                                                                                                                                                     tic variations during training and applies differentiated cor-
+visualizes cosine distances between prototypes corrected by                                                                                                                                                                                                                                                               rections to past representations. Building on this, a drift-
+various drift compensation methods and oracle prototypes.                                                                                                                                                                                                                                                                 guided KD strategy is introduced, assigning adaptive regu-
+Prototypes corrected by the CADC method remain closer to                                                                                                                                                                                                                                                                  larization based on transfer difficulty to precisely mitigate
+oracles in incremental phases, explaining its superior effec-                                                                                                                                                                                                                                                             forgetting. Extensive experiments confirm the method’s ef-
+tiveness. Fig. 5 shows last five task accuracy curves for drift                                                                                                                                                                                                                                                           fectiveness, and comparisons with existing drift compensa-
+compensation on four datasets (20-task split).                                                                                                                                                                                                                                                                            tion techniques demonstrate the superiority of CADC.
+Acknowledgments                                                       [11] Kaiming He, Xiangyu Zhang, Shaoqing Ren, and Jian Sun.
+                                                                           Deep residual learning for image recognition. In 2016 IEEE
+This work was supported by National Natural Science                        Conference on Computer Vision and Pattern Recognition
+Foundation of China (Grant No. 62425603, No. 62372233                      (CVPR), pages 770–778, 2016.
+and No. 62506167) and Basic Research Program of Jiangsu               [12] Fushuo Huo, Wenchao Xu, Jingcai Guo, Haozhao Wang, and
+Province (Grant No. BK20243018 and No. BK20251451).                        Yunfeng Fan. Non-exemplar online class-incremental con-
+                                                                           tinual learning via dual-prototype self-augment and refine-
+References                                                                 ment. In Proceedings of the AAAI Conference on Artificial
+                                                                           Intelligence, pages 12698–12707, 2024.
+ [1] Arjun Ashok, K. J. Joseph, and Vineeth N. Balasubrama-
+                                                                      [13] Ahmet Iscen, Jeffrey Zhang, Svetlana Lazebnik, and
+     nian. Class-incremental learning with cross-space clustering
+                                                                           Cordelia Schmid. Memory-efficient incremental learning
+     and controlled transfer. In Computer Vision – ECCV 2022,
+                                                                           through feature adaptation. In Computer Vision – ECCV
+     pages 105–122, 2022.
+                                                                           2020, pages 699–715, 2020.
+ [2] Yiyang Chen, Tianyu Ding, Lei Wang, Jing Huo, Yang Gao,
+                                                                      [14] Dong Un Kang, Hayeon Kim, and Se Young Chun. Class
+     and Wenbin Li. Enhancing few-shot class-incremental learn-
+                                                                           distribution-induced attention map for open-vocabulary se-
+     ing via training-free bi-level modality calibration. In Pro-
+                                                                           mantic segmentations. In The Thirteenth International Con-
+     ceedings of the IEEE/CVF Conference on Computer Vision
+                                                                           ference on Learning Representations (ICLR), 2025.
+     and Pattern Recognition (CVPR), pages 9881–9890, 2025.
+                                                                      [15] Doyoung Kim, Susik Yoon, Dongmin Park, Youngjung Lee,
+ [3] Jia Deng, Wei Dong, Richard Socher, Li-Jia Li, K. Li, and
+                                                                           Hwanjun Song, Jihwan Bang, and Jae-Gil Lee. One size fits
+     Li Fei-Fei. Imagenet: A large-scale hierarchical image
+                                                                           all for semantic shifts: adaptive prompt tuning for continual
+     database. In 2009 IEEE Conference on Computer Vision and
+                                                                           learning. In Proceedings of the 41st International Confer-
+     Pattern Recognition, pages 248–255, 2009.
+                                                                           ence on Machine Learning (ICML), 2024.
+ [4] Arthur Douillard, Alexandre Ramé, Guillaume Couairon,
+     and Matthieu Cord. Dytox: Transformers for continual learn-      [16] James Kirkpatrick, Razvan Pascanu, Neil Rabinowitz, Joel
+     ing with dynamic token expansion. In 2022 IEEE/CVF                    Veness, Guillaume Desjardins, Andrei A. Rusu, Kieran
+     Conference on Computer Vision and Pattern Recognition                 Milan, John Quan, Tiago Ramalho, Agnieszka Grabska-
+     (CVPR), pages 9275–9285, 2022.                                        Barwinska, Demis Hassabis, Claudia Clopath, Dharshan Ku-
+                                                                           maran, and Raia Hadsell. Overcoming catastrophic forget-
+ [5] Takuma Fukuda, Hiroshi Kera, and Kazuhiko Kawamoto.
+                                                                           ting in neural networks. In Proceedings of the National
+     Adapter merging with centroid prototype mapping for scal-
+                                                                           Academy of Sciences, pages 3521–3526, 2017.
+     able class-incremental learning. In Proceedings of the
+     IEEE/CVF Conference on Computer Vision and Pattern               [17] Jonathan Krause, Michael Stark, Jia Deng, and Li Fei-Fei.
+     Recognition (CVPR), pages 4884–4893, 2025.                            3d object representations for fine-grained categorization. In
+                                                                           2013 IEEE International Conference on Computer Vision
+ [6] Xinyuan Gao, Yuhang He, Songlin Dong, Jie Cheng, Xing
+                                                                           Workshops, pages 554–561, 2013.
+     Wei, and Yihong Gong. Dkt: Diverse knowledge trans-
+     fer transformer for class incremental learning. In 2023          [18] Alex Krizhevsky. Learning multiple layers of features from
+     IEEE/CVF Conference on Computer Vision and Pattern                    tiny images. 2009.
+     Recognition (CVPR), pages 24236–24245, 2023.                     [19] Guannan Lai, Yujie Li, Xiangkun Wang, Junbo Zhang, Tian-
+ [7] Alex Gomez-Villa, Dipam Goswami, Kai Wang, Andrew D.                  rui Li, and Xin Yang. Order-robust class incremental learn-
+     Bagdanov, Bartlomiej Twardowski, and Joost van de Weijer.             ing: Graph-driven dynamic similarity grouping. In Proceed-
+     Exemplar-free continual representation learning via learn-            ings of the IEEE/CVF Conference on Computer Vision and
+     able drift compensation. In Computer Vision – ECCV 2024,              Pattern Recognition (CVPR), pages 4894–4904, 2025.
+     page 473–490, 2024.                                              [20] Jiashuo Li, Shaokun Wang, Bo Qian, Yuhang He, Xing Wei,
+ [8] Dipam Goswami, Yuyang Liu, Bartłomiej Twardowski, and                 Qiang Wang, and Yihong Gong. Dynamic integration of
+     Joost van de Weijer. Fecam: exploiting the heterogeneity              task-specific adapters for class incremental learning. In Pro-
+     of class distributions in exemplar-free continual learning. In        ceedings of the IEEE/CVF Conference on Computer Vision
+     Proceedings of the 37th International Conference on Neural            and Pattern Recognition (CVPR), pages 30545–30555, 2025.
+     Information Processing Systems, 2023.                            [21] Qiwei Li and Jiahuan Zhou. Caprompt: Cyclic prompt
+ [9] Dipam Goswami, Albin Soutif-Cormerais, Yuyang Liu,                    aggregation for pre-trained model based class incremental
+     Sandesh Kamath, Bartłomiej Twardowski, and Joost Van                  learning. In Proceedings of the AAAI Conference on Arti-
+     De Weijer. Resurrecting old classes with new data for                 ficial Intelligence, pages 18421–18429, 2025.
+     exemplar-free continual learning.        In 2024 IEEE/CVF        [22] Qiwei Li, Yuxin Peng, and Jiahuan Zhou. Fcs: Feature
+     Conference on Computer Vision and Pattern Recognition                 calibration and separation for non-exemplar class incremen-
+     (CVPR), pages 28525–28534, 2024.                                      tal learning. In Proceedings of the IEEE/CVF Conference
+[10] Jiangpeng He, Zhihao Duan, and Fengqing Zhu. Cl-                      on Computer Vision and Pattern Recognition (CVPR), pages
+     lora: Continual low-rank adaptation for rehearsal-free class-         28495–28504, 2024.
+     incremental learning. In Proceedings of the IEEE/CVF             [23] Zhizhong Li and Derek Hoiem. Learning without forgetting.
+     Conference on Computer Vision and Pattern Recognition                 IEEE Transactions on Pattern Analysis and Machine Intelli-
+     (CVPR), pages 30534–30544, 2025.                                      gence, 40(12):2935–2947, 2018.
+[24] Simone Magistri, Tomaso Trinci, Albin Soutif, Joost van de      [36] Hongmei Yin, Tingliang Feng, Fan Lyu, Fanhua Shang,
+     Weijer, and Andrew D. Bagdanov. Elastic feature consoli-             Hongying Liu, Wei Feng, and Liang Wan. Beyond back-
+     dation for cold start exemplar-free incremental learning. In         ground shift: Rethinking instance replay in continual seman-
+     The Twelfth International Conference on Learning Represen-           tic segmentation. In Proceedings of the Computer Vision and
+     tations (ICLR), 2024.                                                Pattern Recognition Conference (CVPR), pages 9839–9848,
+[25] Tamasha Malepathirana, Damith Senanayake, and Saman                  2025.
+     Halgamuge. Napa-vq: Neighborhood aware prototype aug-           [37] Lu Yu, Bartłomiej Twardowski, Xialei Liu, Luis Herranz,
+     mentation with vector quantization for continual learning.           Kai Wang, Yongmei Cheng, Shangling Jui, and Joost van de
+     In IEEE/CVF International Conference on Computer Vision              Weijer. Semantic drift compensation for class-incremental
+     (ICCV), pages 11640–11650, 2023.                                     learning. In 2020 IEEE/CVF Conference on Computer Vision
+[26] Nicolas Michel, Maorong Wang, Ling Xiao, and Toshihiko               and Pattern Recognition (CVPR), pages 6980–6989, 2020.
+     Yamasaki. Rethinking momentum knowledge distillation in         [38] Jiang-Tian Zhai, Xialei Liu, Lu Yu, and Ming-Ming Cheng.
+     online continual learning. In Proceedings of the 41st In-            Fine-grained knowledge selection and restoration for non-
+     ternational Conference on Machine Learning (ICML), pages             exemplar class incremental learning. In Proceedings of
+     35607–35622, 2024.                                                   the AAAI Conference on Artificial Intelligence, pages 6971–
+[27] Konyul Park, Yecheol Kim, Daehun Kim, and Jun Won                    6978, 2024.
+     Choi. Resilient sensor fusion under adverse sensor failures     [39] Yifan Zhao, Jia Li, Zeyin Song, and Yonghong Tian.
+     via multi-modal expert fusion. In Proceedings of the Com-            Language-inspired relation transfer for few-shot class-
+     puter Vision and Pattern Recognition Conference (CVPR),              incremental learning. IEEE Transactions on Pattern Analysis
+     pages 6720–6729, 2025.                                               and Machine Intelligence, 47(2):1089–1102, 2025.
+[28] Gregoire Petit, Adrian Popescu, Hugo Schindler, David Pi-       [40] Bowen Zheng, Da-Wei Zhou, Han-Jia Ye, and De-Chuan
+     card, and Bertrand Delezoide. Fetril: Feature translation for        Zhan. Task-agnostic guided feature expansion for class-
+     exemplar-free class-incremental learning. In Proceedings of          incremental learning. In Proceedings of the IEEE/CVF
+     the IEEE/CVF Winter Conference on Applications of Com-               Conference on Computer Vision and Pattern Recognition
+     puter Vision (WACV), pages 3911–3920, 2023.                          (CVPR), pages 10099–10109, 2025.
+[29] Zihuan Qiu, Yi Xu, Fanman Meng, Hongliang Li, Linfeng           [41] Da-Wei Zhou, Fu-Yun Wang, Han-Jia Ye, and De-Chuan
+     Xu, and Qingbo Wu. Dual-consistency model inversion for              Zhan. Pycil: a python toolbox for class-incremental learn-
+     non-exemplar class incremental learning. In Proceedings of           ing. SCIENCE CHINA Information Sciences, 66(9):197101,
+     the IEEE/CVF Conference on Computer Vision and Pattern               2023.
+     Recognition (CVPR), pages 24025–24035, 2024.                    [42] Da-Wei Zhou, Zi-Wen Cai, Han-Jia Ye, De-Chuan Zhan,
+[30] Wuxuan Shi and Mang Ye. Prototype reminiscence and                   and Ziwei Liu. Revisiting class-incremental learning with
+     augmented asymmetric knowledge aggregation for non-                  pre-trained models: Generalizability and adaptivity are all
+     exemplar class-incremental learning. In 2023 IEEE/CVF In-            you need. International Journal of Computer Vision, 133(3):
+     ternational Conference on Computer Vision (ICCV), pages              1012–1032, 2024.
+     1772–1781, 2023.                                                [43] Da-Wei Zhou, Qi-Wei Wang, Zhi-Hong Qi, Han-Jia Ye, De-
+[31] Marco Toldo and Mete Ozay. Bring evanescent represen-                Chuan Zhan, and Ziwei Liu. Class-incremental learning: A
+     tations to life in lifelong class incremental learning. In           survey. IEEE Transactions on Pattern Analysis and Machine
+     2022 IEEE/CVF Conference on Computer Vision and Pat-                 Intelligence, pages 1–20, 2024.
+     tern Recognition (CVPR), pages 16711–16720, 2022.               [44] Yuhang Zhou, Jiangchao Yao, Feng Hong, Ya Zhang, and
+[32] Catherine Wah, Steve Branson, Peter Welinder, Pietro Per-            Yanfeng Wang. Balanced destruction-reconstruction dynam-
+     ona, and Serge Belongie. The caltech-ucsd birds-200-2011             ics for memory-replay class incremental learning. IEEE
+     dataset. Technical report, 2011.                                     Transactions on Image Processing, 33:4966–4981, 2024.
+[33] Jiayu Wu, Qixiang Zhang, and Guoxi Xu. Tiny imagenet            [45] Fei Zhu, Xu-Yao Zhang, Chuang Wang, Fei Yin, and Cheng-
+     challenge. Technical report, 2017.                                   Lin Liu. Prototype augmentation and self-supervision for in-
+[34] Huajian Xin, Z.Z. Ren, Junxiao Song, Zhihong Shao, Wan-              cremental learning. In 2021 IEEE/CVF Conference on Com-
+     jia Zhao, Haocheng Wang, Bo Liu, Liyue Zhang, Xuan Lu,               puter Vision and Pattern Recognition (CVPR), pages 5867–
+     Qiushi Du, Wenjun Gao, Haowei Zhang, Qihao Zhu, De-                  5876, 2021.
+     jian Yang, Zhibin Gou, Z.F. Wu, Fuli Luo, and Chong Ruan.       [46] Kai Zhu, Wei Zhai, Yang Cao, Jiebo Luo, and Zheng-
+     Deepseek-prover-v1.5: Harnessing proof assistant feedback            Jun Zha. Self-sustaining representation expansion for non-
+     for reinforcement learning and monte-carlo tree search. In           exemplar class-incremental learning. In Proceedings of
+     The Thirteenth International Conference on Learning Rep-             the IEEE/CVF Conference on Computer Vision and Pattern
+     resentations (ICLR), 2025.                                           Recognition (CVPR), pages 9296–9305, 2022.
+[35] Kunlun Xu, Chenghao Jiang, Peixi Xiong, Yuxin Peng, and         [47] Huiping Zhuang, Run He, Kai Tong, Ziqian Zeng, Cen Chen,
+     Jiahuan Zhou. Dask: Distribution rehearsing via adaptive             and Zhiping Lin. Ds-al: A dual-stream analytic learning for
+     style kernel learning for exemplar-free lifelong person re-          exemplar-free class-incremental learning. In Proceedings of
+     identification. In Proceedings of the AAAI Conference on             the AAAI Conference on Artificial Intelligence, pages 17237–
+     Artificial Intelligence, pages 8915–8923, 2025.                      17244, 2024.
+[48] Xiaohan Zou, Wenchao Ma, and Shu Zhao. Learning con-
+     ditional space-time prompt distributions for video class-
+     incremental learning. In Proceedings of the IEEE/CVF
+     Conference on Computer Vision and Pattern Recognition
+     (CVPR), pages 4862–4873, 2025.
+
