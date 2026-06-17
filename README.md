@@ -27,7 +27,18 @@ Most drift compensation methods assume roughly uniform semantic shift across cla
 
 ## Paper and Citation
 
-This work has been **accepted by CVPR 2026 Findings**. The official BibTeX entry will be released with the public version of the paper.
+If you find this work useful in your research, we would greatly appreciate it if you could cite our paper:
+
+```bibtex
+@InProceedings{Xu_2026_CVPR,
+    author    = {Xu, Fankang and Jin, Lu and Sun, Yanpeng and Xuan, Shiyu and Li, Zechao},
+    title     = {Class-Aware Drift Compensation for Non-Uniform Semantic Shift in Continual Learning},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Findings},
+    month     = {June},
+    year      = {2026},
+    pages     = {7717--7727}
+}
+```
 
 ---
 
