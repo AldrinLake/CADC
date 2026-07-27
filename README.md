@@ -3,10 +3,8 @@
 [![CVPR](https://img.shields.io/badge/CVPR-2026-blue)](http://cvpr.thecvf.com/) [![PyTorch](https://img.shields.io/badge/PyTorch-Implementation-orange)](https://pytorch.org/)
 
 > **Accepted by CVPR 2026 Findings**
->
+> 
 > This repository provides an implementation of **CADC**, a drift compensation method for **Exemplar-Free Class-Incremental Learning (EFCIL)**.
->
-> The codebase is currently being reorganized and will be released after the paper is online.
 
 ## Overview
 
@@ -27,7 +25,18 @@ Most drift compensation methods assume roughly uniform semantic shift across cla
 
 ## Paper and Citation
 
-This work has been **accepted by CVPR 2026 Findings**. The official BibTeX entry will be released with the public version of the paper.
+This work has been **accepted by CVPR 2026 Findings**. If you find this work useful, please consider citing our paper
+
+```
+@InProceedings{Xu_2026_CVPR,
+    author    = {Xu, Fankang and Jin, Lu and Sun, Yanpeng and Xuan, Shiyu and Li, Zechao},
+    title     = {Class-Aware Drift Compensation for Non-Uniform Semantic Shift in Continual Learning},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR) Findings},
+    month     = {June},
+    year      = {2026},
+    pages     = {7717-7727}
+}
+```
 
 ---
 
